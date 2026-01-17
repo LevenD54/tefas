@@ -40,6 +40,7 @@ export default async function handler(request) {
     const bodyText = await request.text();
     
     // 4. Fetch from TEFAS
+    // Note: TEFAS often blocks cloud IPs (AWS/Vercel). If this fails, we rely on the DB.
     stage = 'TEFAS_FETCH';
     const TEFAS_URL = "https://www.tefas.gov.tr/api/DB/BindComparisonFundReturns";
     debugLog.push("Attempting to fetch from TEFAS...");
@@ -53,16 +54,20 @@ export default async function handler(request) {
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
                 'Referer': 'https://www.tefas.gov.tr/FonKarsilastirma.aspx',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Origin': 'https://www.tefas.gov.tr',
+                'Host': 'www.tefas.gov.tr'
             },
             body: bodyText
         });
 
         if (tefasResponse.ok) {
             const data = await tefasResponse.json();
-            if (data && data.data && Array.isArray(data.data)) {
+            if (data && data.data && Array.isArray(data.data) && data.data.length > 0) {
                 tefasData = data.data;
                 debugLog.push(`TEFAS success. Got ${tefasData.length} records.`);
+            } else {
+                debugLog.push(`TEFAS returned empty data or invalid format.`);
             }
         } else {
             debugLog.push(`TEFAS Failed with Status: ${tefasResponse.status}`);
@@ -116,16 +121,18 @@ export default async function handler(request) {
     stage = 'SUPABASE_FALLBACK';
     debugLog.push("Falling back to Supabase read...");
     
+    // Simple select to get all funds
     const { data: dbData, error: fetchError } = await supabase
       .from('tefas_funds')
       .select('*');
 
     if (fetchError) {
-      throw new Error(`Database fetch failed: ${fetchError.message} (Code: ${fetchError.code})`);
+      // If table doesn't exist or permission error
+      throw new Error(`Database fetch failed: ${fetchError.message}. Make sure the 'tefas_funds' table exists and has data.`);
     }
 
     if (!dbData || dbData.length === 0) {
-      throw new Error("Database is empty and TEFAS is unreachable.");
+      throw new Error("Database is empty and TEFAS API blocked the request. Please import the provided CSV file into Supabase to seed the data.");
     }
 
     // Map DB columns back to TEFAS format for frontend compatibility

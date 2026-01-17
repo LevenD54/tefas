@@ -1,2 +1,14 @@
 code,title,type,price,daily_return,weekly_return,monthly_return,three_month_return,six_month_return,ytd_return,yearly_return,three_year_return,fund_size,investor_count,last_updated
-MAC,Marmara Capital Hisse Senedi Fonu,Hisse Senedi,1.5234,0.5,1.2,5.4,12.1,25.4,30.1,85.4,300.2,150000000,12500,2023-12-25T10:00:00Z
+MAC,Marmara Capital Hisse Senedi Fonu,Hisse Senedi,1.5234,0.50,1.20,5.40,12.10,25.40,30.10,85.40,300.20,150000000,12500,2023-12-25T10:00:00Z
+TCD,Tacirler Portföy Değişken Fon,Değişken,3.4521,1.20,2.50,8.10,15.40,35.20,45.10,95.20,450.10,250000000,25000,2023-12-25T10:00:00Z
+AFT,Ak Portföy Yeni Teknolojiler Yabancı Hisse,Hisse Senedi,0.8541,-0.20,1.10,4.20,18.50,22.10,38.50,75.10,280.50,180000000,18000,2023-12-25T10:00:00Z
+YAY,Yapı Kredi Portföy Yabancı Teknoloji,Hisse Senedi,54.2100,0.10,0.90,3.80,16.20,20.50,35.20,70.50,260.10,120000000,10000,2023-12-25T10:00:00Z
+NNF,Hedef Portföy Birinci Hisse Senedi,Hisse Senedi,4.1200,0.80,1.50,6.50,10.20,28.50,32.10,88.50,320.40,160000000,14000,2023-12-25T10:00:00Z
+IPJ,İş Portföy Elektrikli Araçlar,Hisse Senedi,2.3400,-0.50,0.50,2.10,8.50,15.40,25.10,60.20,210.50,90000000,8000,2023-12-25T10:00:00Z
+KUB,Kuveyt Türk Katılım Hisse,Hisse Senedi,8.5400,0.30,1.10,5.20,11.50,24.10,28.50,80.10,290.10,140000000,11000,2023-12-25T10:00:00Z
+AES,Ak Portföy Petrol Yabancı BYF,Emtia,0.4500,1.50,3.20,4.50,-2.10,5.40,10.20,15.40,80.50,50000000,5000,2023-12-25T10:00:00Z
+GSP,Azimut Portföy G-20 Ülkeleri,Değişken,1.2300,0.20,0.80,3.50,9.50,18.20,22.10,55.40,190.20,70000000,6000,2023-12-25T10:00:00Z
+ZJ1,Ziraat Portföy BIST 100 Dışı,Hisse Senedi,3.5600,0.90,1.80,7.20,13.50,30.10,40.50,92.10,410.50,220000000,20000,2023-12-25T10:00:00Z
+KZL,Kızılay Altın Fonu,Altın,12.5400,0.10,0.40,2.50,6.50,12.40,18.50,45.20,150.10,300000000,30000,2023-12-25T10:00:00Z
+OTA,Oyak Portföy Altın Fonu,Altın,2.1500,0.12,0.42,2.55,6.55,12.45,18.55,45.25,150.15,280000000,28000,2023-12-25T10:00:00Z
+DBH,Deniz Portföy Eurobond (Döviz),Borçlanma,5.6700,0.05,0.20,1.20,3.50,7.80,12.50,25.40,90.50,600000000,40000,2023-12-25T10:00:00Z
