@@ -45,8 +45,6 @@ const App: React.FC = () => {
       }
     } catch (err: any) {
       console.error("App Load Data Error:", err);
-      // Even if fetch fails, check if we have old data in state?
-      // No, service handles cache fallback. If we are here, everything failed.
       setError(err.message || "Veriler yüklenirken beklenmeyen bir hata oluştu.");
       setFunds([]); 
     } finally {
@@ -124,8 +122,16 @@ const App: React.FC = () => {
           </div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Veri Bağlantısı Hatası</h2>
           <p className="text-gray-600 mb-6 leading-relaxed">
-            {error}
+            Sunucu ile bağlantı kurulamadı. Lütfen aşağıdaki teknik detayları kontrol edin.
           </p>
+          
+          <div className="mb-6 text-left bg-gray-100 p-4 rounded-md overflow-x-auto">
+             <p className="text-xs font-bold text-gray-500 mb-1">TEKNİK DETAYLAR:</p>
+             <pre className="text-xs text-red-600 font-mono whitespace-pre-wrap break-all">
+                {error}
+             </pre>
+          </div>
+
           <div className="flex gap-3 justify-center">
             <button onClick={loadData} className="px-5 py-2.5 bg-teal-600 text-white font-medium rounded-lg hover:bg-teal-700">
               Tekrar Dene
@@ -174,7 +180,7 @@ const App: React.FC = () => {
                 <div>
                   <p className="text-sm font-medium text-amber-800">Çevrimdışı Veri Modu</p>
                   <p className="text-xs text-amber-700">
-                    TEFAS bağlantısı kurulamadı. Daha önce kaydedilen veriler (Veritabanı) gösteriliyor.
+                    TEFAS bağlantısı kurulamadı. Veritabanındaki son kayıtlar gösteriliyor.
                   </p>
                 </div>
              </div>

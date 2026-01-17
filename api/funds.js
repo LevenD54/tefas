@@ -4,40 +4,48 @@ export const config = {
   runtime: 'edge',
 };
 
-// Initialize Supabase Client
-// Note: In Vercel, ensure SUPABASE_URL and SUPABASE_KEY are set in Environment Variables.
-// Fallback values are used here based on your prompt, but Env vars are recommended.
-const SUPABASE_URL = process.env.SUPABASE_URL || "https://tbiedjllogbhhtjvammb.supabase.co";
-const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
 
 export default async function handler(request) {
-  const TEFAS_URL = "https://www.tefas.gov.tr/api/DB/BindComparisonFundReturns";
-
-  // CORS Headers
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  };
-
+  // 1. Check Method
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   if (request.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+    return new Response(JSON.stringify({ error: 'Method not allowed', detail: 'Only POST requests are accepted.' }), {
       status: 405,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
 
-  try {
-    const bodyText = await request.text();
-    console.log("Fetching data from TEFAS...");
+  let stage = 'INIT';
+  let debugLog = [];
 
-    // 1. Attempt to fetch fresh data from TEFAS
+  try {
+    const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    // 2. Check Environment Variables
+    stage = 'ENV_CHECK';
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      throw new Error("Supabase credentials missing. Please check Vercel Environment Variables.");
+    }
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    
+    // 3. Parse Request
+    stage = 'PARSE_BODY';
+    const bodyText = await request.text();
+    
+    // 4. Fetch from TEFAS
+    stage = 'TEFAS_FETCH';
+    const TEFAS_URL = "https://www.tefas.gov.tr/api/DB/BindComparisonFundReturns";
+    debugLog.push("Attempting to fetch from TEFAS...");
+
     const tefasResponse = await fetch(TEFAS_URL, {
       method: 'POST',
       headers: {
@@ -50,12 +58,14 @@ export default async function handler(request) {
     });
 
     if (tefasResponse.ok) {
+      stage = 'TEFAS_PARSE';
       const data = await tefasResponse.json();
       
       if (data && data.data && Array.isArray(data.data)) {
-        console.log(`TEFAS success. Got ${data.data.length} records. Updating DB...`);
+        debugLog.push(`TEFAS success. Got ${data.data.length} records.`);
         
-        // Transform for DB
+        // 5. Save to Supabase
+        stage = 'SUPABASE_UPSERT';
         const dbRows = data.data.map(item => ({
           code: item.FONKODU,
           title: item.FONUNADI,
@@ -74,35 +84,45 @@ export default async function handler(request) {
           last_updated: new Date().toISOString()
         }));
 
-        // Upsert to Supabase (Save fresh data)
         const { error: dbError } = await supabase
           .from('tefas_funds')
           .upsert(dbRows, { onConflict: 'code' });
 
         if (dbError) {
-          console.error("Supabase Upsert Error:", dbError);
+          debugLog.push(`Supabase Warning: ${dbError.message}`);
+        } else {
+          debugLog.push("Supabase updated successfully.");
         }
 
-        return new Response(JSON.stringify({ data: data.data, source: 'tefas-live' }), {
+        return new Response(JSON.stringify({ 
+          data: data.data, 
+          source: 'tefas-live',
+          debug: debugLog 
+        }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
     } else {
-      console.warn(`TEFAS Fetch Failed: ${tefasResponse.status}`);
+      debugLog.push(`TEFAS Failed with Status: ${tefasResponse.status}`);
     }
 
-    // 2. Fallback: If TEFAS failed, fetch from Supabase
-    console.log("Falling back to Supabase database...");
+    // 6. Fallback to Supabase
+    stage = 'SUPABASE_FALLBACK';
+    debugLog.push("Falling back to Supabase read...");
+    
     const { data: dbData, error: fetchError } = await supabase
       .from('tefas_funds')
       .select('*');
 
     if (fetchError) {
-      throw new Error(`Database fetch failed: ${fetchError.message}`);
+      throw new Error(`Database fetch failed: ${fetchError.message} (Code: ${fetchError.code})`);
     }
 
-    // Transform DB snake_case back to TEFAS UPPERCASE format for frontend compatibility
+    if (!dbData || dbData.length === 0) {
+      throw new Error("Database is empty and TEFAS is unreachable.");
+    }
+
     const mappedData = dbData.map(row => ({
       FONKODU: row.code,
       FONUNADI: row.title,
@@ -119,14 +139,23 @@ export default async function handler(request) {
       KISISAYISI: row.investor_count
     }));
 
-    return new Response(JSON.stringify({ data: mappedData, source: 'database-fallback' }), {
+    return new Response(JSON.stringify({ 
+      data: mappedData, 
+      source: 'database-fallback',
+      debug: debugLog
+    }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
     console.error("Handler Error:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ 
+      error: error.message, 
+      stage: stage,
+      stack: error.stack,
+      debug: debugLog
+    }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

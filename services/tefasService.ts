@@ -31,8 +31,19 @@ export const fetchFunds = async (type: FundType = FundType.ALL): Promise<{ data:
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`API Hatası (${response.status}): ${errText}`);
+      let errorInfo = `HTTP ${response.status}`;
+      try {
+        const errorJson = await response.json();
+        if (errorJson.error) {
+          errorInfo = `Stage: ${errorJson.stage} | Error: ${errorJson.error}`;
+          if (errorJson.detail) errorInfo += ` | Detail: ${errorJson.detail}`;
+        }
+      } catch (e) {
+        // If JSON parse fails, try text
+        const text = await response.text();
+        if (text) errorInfo += ` | Raw: ${text.substring(0, 100)}`;
+      }
+      throw new Error(errorInfo);
     }
 
     const result = await response.json();
@@ -44,18 +55,16 @@ export const fetchFunds = async (type: FundType = FundType.ALL): Promise<{ data:
         source: result.source === 'tefas-live' ? 'api' : 'database' 
       };
     } else {
-      throw new Error("Veri formatı geçersiz.");
+      throw new Error("API boş yanıt döndürdü.");
     }
 
   } catch (error: any) {
     console.error("[TEFAS Service] Error:", error);
-    throw new Error(error.message || "Veriler alınırken bir hata oluştu.");
+    throw new Error(error.message || "Bilinmeyen hata");
   }
 };
 
 export const getLastDbUpdate = (): Date | null => {
-  // Since DB manages updates now, we can assume 'now' if source is API,
-  // or return null to hide the timestamp if unsure.
   return new Date();
 };
 
