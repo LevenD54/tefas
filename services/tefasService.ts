@@ -3,16 +3,9 @@ import { Fund, FundType } from '../types';
 /**
  * TEFAS API CONFIGURATION
  */
-// 1. Priority: Vercel Serverless Function (Created in api/funds.js)
 const API_ROUTE_URL = "/api/funds";
-// 2. Fallback: CORS Proxy (Only used if running locally without Vercel CLI)
-const TEFAS_API_URL = "https://www.tefas.gov.tr/api/DB/BindComparisonFundReturns";
-const PROXY_URL = "https://corsproxy.io/?"; 
 
-const DB_KEY = 'TEFAS_FUNDS_DB';
-const DB_TIMESTAMP_KEY = 'TEFAS_DB_LAST_UPDATE';
-
-export const fetchFunds = async (type: FundType = FundType.ALL): Promise<{ data: Fund[], source: 'api' | 'cache' }> => {
+export const fetchFunds = async (type: FundType = FundType.ALL): Promise<{ data: Fund[], source: 'api' | 'cache' | 'database' }> => {
   console.log(`[TEFAS Service] Requesting data for: ${type}`);
   
   try {
@@ -31,94 +24,39 @@ export const fetchFunds = async (type: FundType = FundType.ALL): Promise<{ data:
       kurucukod: ""
     };
 
-    // --- STRATEGY 1: Try Vercel API Route (Best for Production) ---
-    try {
-      console.log("[TEFAS Service] Attempting Vercel API Route...");
-      const response = await fetch(API_ROUTE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams(payload as any)
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        if (result && result.data) {
-          const parsed = parseTefasResponse(result.data);
-          saveToDatabase(parsed); // Save to LocalStorage
-          return { data: parsed, source: 'api' };
-        }
-      } else {
-        console.warn(`[TEFAS Service] API Route failed: ${response.status}`);
-      }
-    } catch (e) {
-      console.warn("[TEFAS Service] API Route unavailable (likely local dev). Switching to Proxy.");
-    }
-
-    // --- STRATEGY 2: Try CORS Proxy (Fallback) ---
-    console.log("[TEFAS Service] Attempting CORS Proxy...");
-    const targetUrl = PROXY_URL + encodeURIComponent(TEFAS_API_URL);
-    const proxyResponse = await fetch(targetUrl, {
+    const response = await fetch(API_ROUTE_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With': 'XMLHttpRequest',
-      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(payload as any)
     });
 
-    if (proxyResponse.ok) {
-        const text = await proxyResponse.text();
-        // Validate JSON to avoid HTML error pages
-        if (text.trim().startsWith('<')) throw new Error("Proxy blocked.");
-        
-        const result = JSON.parse(text);
-        if (result && result.data) {
-           const parsed = parseTefasResponse(result.data);
-           saveToDatabase(parsed);
-           return { data: parsed, source: 'api' };
-        }
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`API Hatası (${response.status}): ${errText}`);
     }
 
-    throw new Error("Tüm bağlantı yöntemleri başarısız oldu.");
+    const result = await response.json();
 
-  } catch (error) {
-    console.error("[TEFAS Service] Live fetch failed:", error);
-    
-    // --- STRATEGY 3: Load from "Database" (LocalStorage) ---
-    const cached = loadFromDatabase();
-    if (cached.length > 0) {
-      console.log("[TEFAS Service] Serving from Local Database cache.");
-      return { data: cached, source: 'cache' };
+    if (result && result.data) {
+      const parsed = parseTefasResponse(result.data);
+      return { 
+        data: parsed, 
+        source: result.source === 'tefas-live' ? 'api' : 'database' 
+      };
+    } else {
+      throw new Error("Veri formatı geçersiz.");
     }
 
-    throw error;
-  }
-};
-
-// --- DATABASE FUNCTIONS (LocalStorage) ---
-
-const saveToDatabase = (data: Fund[]) => {
-  try {
-    localStorage.setItem(DB_KEY, JSON.stringify(data));
-    localStorage.setItem(DB_TIMESTAMP_KEY, new Date().toISOString());
-  } catch (e) {
-    console.error("Database Save Failed (Quota exceeded?)", e);
-  }
-};
-
-const loadFromDatabase = (): Fund[] => {
-  try {
-    const data = localStorage.getItem(DB_KEY);
-    if (!data) return [];
-    return JSON.parse(data);
-  } catch (e) {
-    return [];
+  } catch (error: any) {
+    console.error("[TEFAS Service] Error:", error);
+    throw new Error(error.message || "Veriler alınırken bir hata oluştu.");
   }
 };
 
 export const getLastDbUpdate = (): Date | null => {
-  const ts = localStorage.getItem(DB_TIMESTAMP_KEY);
-  return ts ? new Date(ts) : null;
+  // Since DB manages updates now, we can assume 'now' if source is API,
+  // or return null to hide the timestamp if unsure.
+  return new Date();
 };
 
 // --- HELPERS ---
