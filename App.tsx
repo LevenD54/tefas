@@ -10,7 +10,8 @@ import {
   Wallet, 
   RefreshCw, 
   Filter,
-  AlertCircle
+  AlertTriangle,
+  WifiOff
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -28,14 +29,17 @@ const App: React.FC = () => {
     try {
       const data = await fetchFunds(selectedType);
       if (data.length === 0) {
-        setError("Veri çekildi ancak liste boş döndü. Filtreleri kontrol edin.");
+        // Sometimes valid response but empty list
+        setError("Veri kaynağı boş liste döndürdü. Seçili kriterlere uygun fon bulunamadı veya servis geçici olarak boş cevap veriyor.");
+        setFunds([]);
       } else {
         setFunds(data);
         setLastUpdated(new Date());
       }
-    } catch (err) {
-      console.error(err);
-      setError("TEFAS verileri çekilemedi. CORS politikası veya erişim engeli olabilir.");
+    } catch (err: any) {
+      console.error("App Load Data Error:", err);
+      setError(err.message || "Veriler yüklenirken beklenmeyen bir hata oluştu.");
+      setFunds([]); // Clear old data on error to show error screen
     } finally {
       setLoading(false);
     }
@@ -56,6 +60,7 @@ const App: React.FC = () => {
   };
 
   const sortedFunds = useMemo(() => {
+    if (!funds) return [];
     return [...funds].sort((a, b) => {
       const aValue = a[sortField];
       const bValue = b[sortField];
@@ -66,7 +71,6 @@ const App: React.FC = () => {
           : bValue.localeCompare(aValue);
       }
       
-      // Numeric sort
       return sortDirection === 'asc' 
         ? (aValue as number) - (bValue as number) 
         : (bValue as number) - (aValue as number);
@@ -84,6 +88,65 @@ const App: React.FC = () => {
     const total = funds.reduce((acc, curr) => acc + curr.yearlyReturn, 0);
     return total / funds.length;
   }, [funds]);
+
+  // --- FULL SCREEN STATES ---
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center max-w-sm w-full">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-teal-100 border-t-teal-600 mb-6"></div>
+          <h2 className="text-xl font-bold text-gray-800">Veriler Yükleniyor</h2>
+          <p className="text-sm text-gray-500 mt-2 text-center">
+            TEFAS üzerinden güncel fon verileri çekiliyor. Lütfen bekleyin...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Critical Error State (Full Screen)
+  if (error && funds.length === 0) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-lg border border-red-100 max-w-lg w-full text-center">
+          <div className="bg-red-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <WifiOff className="w-10 h-10 text-red-500" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Veri Bağlantısı Hatası</h2>
+          <p className="text-gray-600 mb-6 leading-relaxed">
+            {error}
+          </p>
+          
+          <div className="bg-gray-50 rounded-lg p-4 text-left mb-6 border border-gray-200">
+            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Muhtemel Sebepler:</h4>
+            <ul className="text-xs text-gray-600 space-y-1 list-disc list-inside">
+              <li>TEFAS sunucularına şu an erişilemiyor olabilir.</li>
+              <li>Kullanılan CORS Proxy servisi (corsproxy.io) isteği engelliyor olabilir.</li>
+              <li>İnternet bağlantınızda kesinti olabilir.</li>
+            </ul>
+          </div>
+
+          <div className="flex gap-3 justify-center">
+            <button 
+              onClick={() => window.location.reload()}
+              className="px-5 py-2.5 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Sayfayı Yenile
+            </button>
+            <button 
+              onClick={loadData}
+              className="px-5 py-2.5 bg-teal-600 text-white font-medium rounded-lg hover:bg-teal-700 transition-colors shadow-sm"
+            >
+              Tekrar Dene
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- MAIN CONTENT ---
 
   return (
     <div className="min-h-screen bg-gray-50 pb-12">
@@ -115,32 +178,17 @@ const App: React.FC = () => {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 space-y-8">
         
-        {/* Error State */}
-        {error && (
-          <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg">
-            <div className="flex items-start">
-              <div className="flex-shrink-0">
-                <AlertCircle className="h-5 w-5 text-red-500" />
-              </div>
-              <div className="ml-3">
-                <h3 className="text-sm font-medium text-red-800">Bağlantı Hatası</h3>
-                <div className="mt-2 text-sm text-red-700">
-                  <p>{error}</p>
-                  <p className="mt-1 font-mono text-xs bg-red-100 p-1 rounded inline-block">
-                    Not: Tarayıcı tabanlı erişim CORS engeline takılabilir.
-                  </p>
+        {/* Soft Error Banner (If we have data but refresh failed) */}
+        {error && funds.length > 0 && (
+          <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg flex items-center justify-between">
+             <div className="flex items-center">
+                <AlertTriangle className="h-5 w-5 text-amber-500 mr-3" />
+                <div>
+                  <p className="text-sm font-medium text-amber-800">Veriler güncellenemedi</p>
+                  <p className="text-xs text-amber-700">{error}</p>
                 </div>
-                <div className="mt-4">
-                  <button
-                    type="button"
-                    onClick={loadData}
-                    className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                  >
-                    Tekrar Dene
-                  </button>
-                </div>
-              </div>
-            </div>
+             </div>
+             <button onClick={loadData} className="text-xs font-semibold text-amber-800 hover:underline">Tekrar Dene</button>
           </div>
         )}
 
@@ -165,7 +213,7 @@ const App: React.FC = () => {
             ))}
           </div>
           <div className="text-xs text-gray-400">
-             {lastUpdated ? `Son Güncelleme: ${lastUpdated.toLocaleTimeString()}` : 'Veri bekleniyor...'}
+             {lastUpdated ? `Son Güncelleme: ${lastUpdated.toLocaleTimeString()}` : ''}
           </div>
         </div>
 
@@ -212,18 +260,12 @@ const App: React.FC = () => {
             </div>
           </div>
           
-          {loading ? (
-             <div className="bg-white rounded-xl shadow-sm p-12 flex justify-center items-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600"></div>
-             </div>
-          ) : (
-            <FundTable 
-              funds={sortedFunds} 
-              sortField={sortField} 
-              sortDirection={sortDirection}
-              onSort={handleSort}
-            />
-          )}
+          <FundTable 
+            funds={sortedFunds} 
+            sortField={sortField} 
+            sortDirection={sortDirection}
+            onSort={handleSort}
+          />
         </div>
       </main>
     </div>

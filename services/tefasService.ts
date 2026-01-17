@@ -4,32 +4,33 @@ import { Fund, FundType } from '../types';
  * TEFAS API CONFIGURATION
  */
 const TEFAS_API_URL = "https://www.tefas.gov.tr/api/DB/BindComparisonFundReturns";
-// Using a public CORS proxy. If this is deployed to a backend capable environment, 
-// you should replace this with your own server-side proxy.
+
+// Primary Proxy
 const PROXY_URL = "https://corsproxy.io/?"; 
 
 export const fetchFunds = async (type: FundType = FundType.ALL): Promise<Fund[]> => {
+  console.log(`[TEFAS Service] Starting fetch request for type: ${type}`);
+  
   try {
-    // Prepare dates
     const today = new Date();
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(today.getDate() - 30);
 
     const dateToString = (d: Date) => d.toISOString().split('T')[0];
 
-    // Payload structure required by TEFAS ASP.NET backend
     const payload = {
-      calismatipi: "2", // 2 usually means 'Returns' based comparison
-      fontip: "YAT",    // 'YAT' = Yatırım Fonları
+      calismatipi: "2",
+      fontip: "YAT",
       sfontip: mapFundTypeToCode(type),
       bastar: dateToString(thirtyDaysAgo),
       bittar: dateToString(today),
       kurucukod: ""
     };
 
-    console.log("Fetching from TEFAS via Proxy...", payload);
+    const targetUrl = PROXY_URL + encodeURIComponent(TEFAS_API_URL);
+    console.log(`[TEFAS Service] Fetching from: ${targetUrl}`);
 
-    const response = await fetch(PROXY_URL + encodeURIComponent(TEFAS_API_URL), {
+    const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -38,44 +39,61 @@ export const fetchFunds = async (type: FundType = FundType.ALL): Promise<Fund[]>
       body: new URLSearchParams(payload as any)
     });
 
+    console.log(`[TEFAS Service] Response status: ${response.status}`);
+
     if (!response.ok) {
-      throw new Error(`HTTP Error: ${response.status}`);
+      throw new Error(`Sunucu Hatası: ${response.status} ${response.statusText}`);
     }
 
-    const result = await response.json();
+    const text = await response.text();
+    console.log(`[TEFAS Service] Response length: ${text.length} chars`);
+
+    // Check if response is HTML (Common proxy error page)
+    if (text.trim().startsWith('<')) {
+      console.error("[TEFAS Service] Received HTML instead of JSON. Proxy might be blocked or returning an error page.");
+      console.error("Preview:", text.substring(0, 200));
+      throw new Error("Proxy servisi HTML hata sayfası döndürdü. (Muhtemelen erişim engellendi)");
+    }
+
+    let result;
+    try {
+      result = JSON.parse(text);
+    } catch (e) {
+      console.error("[TEFAS Service] JSON Parse Error:", e);
+      throw new Error("TEFAS'tan gelen veri JSON formatında değil.");
+    }
 
     if (result && result.data && Array.isArray(result.data)) {
-       return parseTefasResponse(result.data);
+       const parsed = parseTefasResponse(result.data);
+       console.log(`[TEFAS Service] Successfully parsed ${parsed.length} funds.`);
+       return parsed;
     } else {
-       console.warn("TEFAS response format unexpected:", result);
-       return [];
+       console.warn("[TEFAS Service] Unexpected JSON structure:", result);
+       // TEFAS sometimes returns empty data if no funds match, but structure should be there.
+       if (result.data === null) return []; 
+       throw new Error("TEFAS verisi beklendiği gibi değil (Veri yapısı bozuk).");
     }
 
-  } catch (error) {
-    console.error("TEFAS Fetch Error:", error);
-    // Re-throw to be handled by the UI (showing error state instead of mock data)
-    throw error;
+  } catch (error: any) {
+    console.error("[TEFAS Service] General Error:", error);
+    throw new Error(error.message || "Bilinmeyen bir iletişim hatası oluştu.");
   }
 };
 
-// Helper: Map UI Enum to TEFAS 'sfontip' codes
-// These codes are estimates based on common TEFAS parameters. 
-// "TUM" is safest.
 const mapFundTypeToCode = (type: FundType): string => {
   switch (type) {
-    case FundType.EQUITY: return "HYF"; // Hisse Senedi (Guess, often needs specific filter)
-    case FundType.GOLD: return "ALT";   // Altın
-    case FundType.BOND: return "BGT";   // Borçlanma
-    default: return "TUM";              // Tümü
+    case FundType.EQUITY: return "HYF"; 
+    case FundType.GOLD: return "ALT";   
+    case FundType.BOND: return "BGT";   
+    default: return "TUM";              
   }
 };
 
-// Helper: Parse real API response into our App's format
 const parseTefasResponse = (items: any[]): Fund[] => {
     return items.map((item: any) => ({
         code: item.FONKODU,
         title: item.FONUNADI,
-        type: 'Yatırım Fonu', // The API might not return the friendly type name directly in this endpoint
+        type: 'Yatırım Fonu', 
         price: item.FIYAT,
         dailyReturn: item.GUNLUKGETIRI || 0,
         weeklyReturn: item.HAFTALIKGETIRI || 0, 
