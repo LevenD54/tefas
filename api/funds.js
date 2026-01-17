@@ -10,6 +10,10 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
+// Credentials from environment or fallback to provided keys
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://tbiedjllogbhhtjvammb.supabase.co";
+const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiaWVkamxsb2diaGh0anZhbW1iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgwNTk0MjIsImV4cCI6MjA4MzYzNTQyMn0.Ie8jIagJRegLTydzM7TicXWyLapKAYGQ8hh-oHI-dmA";
+
 export default async function handler(request) {
   // 1. Check Method
   if (request.method === 'OPTIONS') {
@@ -27,17 +31,11 @@ export default async function handler(request) {
   let debugLog = [];
 
   try {
-    const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-    // 2. Check Environment Variables
-    stage = 'ENV_CHECK';
-    if (!SUPABASE_URL || !SUPABASE_KEY) {
-      throw new Error("Supabase credentials missing. Please check Vercel Environment Variables.");
-    }
+    // 2. Initialize Supabase
+    stage = 'DB_INIT';
     const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
     
-    // 3. Parse Request
+    // 3. Parse Request Body
     stage = 'PARSE_BODY';
     const bodyText = await request.text();
     
@@ -46,27 +44,37 @@ export default async function handler(request) {
     const TEFAS_URL = "https://www.tefas.gov.tr/api/DB/BindComparisonFundReturns";
     debugLog.push("Attempting to fetch from TEFAS...");
 
-    const tefasResponse = await fetch(TEFAS_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Referer': 'https://www.tefas.gov.tr/FonKarsilastirma.aspx',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      },
-      body: bodyText
-    });
+    let tefasData = null;
 
-    if (tefasResponse.ok) {
-      stage = 'TEFAS_PARSE';
-      const data = await tefasResponse.json();
-      
-      if (data && data.data && Array.isArray(data.data)) {
-        debugLog.push(`TEFAS success. Got ${data.data.length} records.`);
-        
-        // 5. Save to Supabase
+    try {
+        const tefasResponse = await fetch(TEFAS_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Referer': 'https://www.tefas.gov.tr/FonKarsilastirma.aspx',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            },
+            body: bodyText
+        });
+
+        if (tefasResponse.ok) {
+            const data = await tefasResponse.json();
+            if (data && data.data && Array.isArray(data.data)) {
+                tefasData = data.data;
+                debugLog.push(`TEFAS success. Got ${tefasData.length} records.`);
+            }
+        } else {
+            debugLog.push(`TEFAS Failed with Status: ${tefasResponse.status}`);
+        }
+    } catch (tefasError) {
+        debugLog.push(`TEFAS Fetch Error: ${tefasError.message}`);
+    }
+
+    // 5. If TEFAS returned data, update Supabase
+    if (tefasData) {
         stage = 'SUPABASE_UPSERT';
-        const dbRows = data.data.map(item => ({
+        const dbRows = tefasData.map(item => ({
           code: item.FONKODU,
           title: item.FONUNADI,
           type: 'Yatırım Fonu',
@@ -89,25 +97,22 @@ export default async function handler(request) {
           .upsert(dbRows, { onConflict: 'code' });
 
         if (dbError) {
-          debugLog.push(`Supabase Warning: ${dbError.message}`);
+          debugLog.push(`Supabase Upsert Warning: ${dbError.message}`);
         } else {
           debugLog.push("Supabase updated successfully.");
         }
 
         return new Response(JSON.stringify({ 
-          data: data.data, 
+          data: tefasData, 
           source: 'tefas-live',
           debug: debugLog 
         }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
-      }
-    } else {
-      debugLog.push(`TEFAS Failed with Status: ${tefasResponse.status}`);
     }
 
-    // 6. Fallback to Supabase
+    // 6. Fallback to Supabase Read
     stage = 'SUPABASE_FALLBACK';
     debugLog.push("Falling back to Supabase read...");
     
@@ -123,6 +128,7 @@ export default async function handler(request) {
       throw new Error("Database is empty and TEFAS is unreachable.");
     }
 
+    // Map DB columns back to TEFAS format for frontend compatibility
     const mappedData = dbData.map(row => ({
       FONKODU: row.code,
       FONUNADI: row.title,
@@ -153,7 +159,6 @@ export default async function handler(request) {
     return new Response(JSON.stringify({ 
       error: error.message, 
       stage: stage,
-      stack: error.stack,
       debug: debugLog
     }), {
       status: 500,
