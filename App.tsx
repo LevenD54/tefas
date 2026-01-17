@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Fund, FundType, SortField, SortDirection } from './types';
-import { fetchFunds } from './services/tefasService';
+import { fetchFunds, getLastDbUpdate } from './services/tefasService';
 import FundTable from './components/FundTable';
 import StatCard from './components/StatCard';
 import ComparisonChart from './components/ComparisonChart';
@@ -11,13 +11,15 @@ import {
   RefreshCw, 
   Filter,
   AlertTriangle,
-  WifiOff
+  WifiOff,
+  Database
 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [funds, setFunds] = useState<Fund[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dataSource, setDataSource] = useState<'api' | 'cache'>('api');
   const [selectedType, setSelectedType] = useState<FundType>(FundType.ALL);
   const [sortField, setSortField] = useState<SortField>('dailyReturn');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -27,19 +29,26 @@ const App: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchFunds(selectedType);
-      if (data.length === 0) {
-        // Sometimes valid response but empty list
-        setError("Veri kaynağı boş liste döndürdü. Seçili kriterlere uygun fon bulunamadı veya servis geçici olarak boş cevap veriyor.");
+      const result = await fetchFunds(selectedType);
+      
+      if (result.data.length === 0) {
+        setError("Veri kaynağı boş liste döndürdü. Seçili kriterlere uygun fon bulunamadı.");
         setFunds([]);
       } else {
-        setFunds(data);
-        setLastUpdated(new Date());
+        setFunds(result.data);
+        setDataSource(result.source);
+        if (result.source === 'api') {
+           setLastUpdated(new Date());
+        } else {
+           setLastUpdated(getLastDbUpdate());
+        }
       }
     } catch (err: any) {
       console.error("App Load Data Error:", err);
+      // Even if fetch fails, check if we have old data in state?
+      // No, service handles cache fallback. If we are here, everything failed.
       setError(err.message || "Veriler yüklenirken beklenmeyen bir hata oluştu.");
-      setFunds([]); // Clear old data on error to show error screen
+      setFunds([]); 
     } finally {
       setLoading(false);
     }
@@ -98,14 +107,14 @@ const App: React.FC = () => {
           <div className="animate-spin rounded-full h-12 w-12 border-4 border-teal-100 border-t-teal-600 mb-6"></div>
           <h2 className="text-xl font-bold text-gray-800">Veriler Yükleniyor</h2>
           <p className="text-sm text-gray-500 mt-2 text-center">
-            TEFAS üzerinden güncel fon verileri çekiliyor. Lütfen bekleyin...
+            TEFAS üzerinden güncel fon verileri çekiliyor...
           </p>
         </div>
       </div>
     );
   }
 
-  // Critical Error State (Full Screen)
+  // Critical Error State
   if (error && funds.length === 0) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4">
@@ -117,27 +126,8 @@ const App: React.FC = () => {
           <p className="text-gray-600 mb-6 leading-relaxed">
             {error}
           </p>
-          
-          <div className="bg-gray-50 rounded-lg p-4 text-left mb-6 border border-gray-200">
-            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Muhtemel Sebepler:</h4>
-            <ul className="text-xs text-gray-600 space-y-1 list-disc list-inside">
-              <li>TEFAS sunucularına şu an erişilemiyor olabilir.</li>
-              <li>Kullanılan CORS Proxy servisi (corsproxy.io) isteği engelliyor olabilir.</li>
-              <li>İnternet bağlantınızda kesinti olabilir.</li>
-            </ul>
-          </div>
-
           <div className="flex gap-3 justify-center">
-            <button 
-              onClick={() => window.location.reload()}
-              className="px-5 py-2.5 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors"
-            >
-              Sayfayı Yenile
-            </button>
-            <button 
-              onClick={loadData}
-              className="px-5 py-2.5 bg-teal-600 text-white font-medium rounded-lg hover:bg-teal-700 transition-colors shadow-sm"
-            >
+            <button onClick={loadData} className="px-5 py-2.5 bg-teal-600 text-white font-medium rounded-lg hover:bg-teal-700">
               Tekrar Dene
             </button>
           </div>
@@ -145,8 +135,6 @@ const App: React.FC = () => {
       </div>
     );
   }
-
-  // --- MAIN CONTENT ---
 
   return (
     <div className="min-h-screen bg-gray-50 pb-12">
@@ -178,17 +166,19 @@ const App: React.FC = () => {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 space-y-8">
         
-        {/* Soft Error Banner (If we have data but refresh failed) */}
-        {error && funds.length > 0 && (
+        {/* Soft Error / Source Banner */}
+        {dataSource === 'cache' && (
           <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg flex items-center justify-between">
              <div className="flex items-center">
-                <AlertTriangle className="h-5 w-5 text-amber-500 mr-3" />
+                <Database className="h-5 w-5 text-amber-500 mr-3" />
                 <div>
-                  <p className="text-sm font-medium text-amber-800">Veriler güncellenemedi</p>
-                  <p className="text-xs text-amber-700">{error}</p>
+                  <p className="text-sm font-medium text-amber-800">Çevrimdışı Veri Modu</p>
+                  <p className="text-xs text-amber-700">
+                    TEFAS bağlantısı kurulamadı. Daha önce kaydedilen veriler (Veritabanı) gösteriliyor.
+                  </p>
                 </div>
              </div>
-             <button onClick={loadData} className="text-xs font-semibold text-amber-800 hover:underline">Tekrar Dene</button>
+             <button onClick={loadData} className="text-xs font-semibold text-amber-800 hover:underline">Bağlanmayı Dene</button>
           </div>
         )}
 

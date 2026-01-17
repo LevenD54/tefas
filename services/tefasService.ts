@@ -3,13 +3,17 @@ import { Fund, FundType } from '../types';
 /**
  * TEFAS API CONFIGURATION
  */
+// 1. Priority: Vercel Serverless Function (Created in api/funds.js)
+const API_ROUTE_URL = "/api/funds";
+// 2. Fallback: CORS Proxy (Only used if running locally without Vercel CLI)
 const TEFAS_API_URL = "https://www.tefas.gov.tr/api/DB/BindComparisonFundReturns";
-
-// Primary Proxy
 const PROXY_URL = "https://corsproxy.io/?"; 
 
-export const fetchFunds = async (type: FundType = FundType.ALL): Promise<Fund[]> => {
-  console.log(`[TEFAS Service] Starting fetch request for type: ${type}`);
+const DB_KEY = 'TEFAS_FUNDS_DB';
+const DB_TIMESTAMP_KEY = 'TEFAS_DB_LAST_UPDATE';
+
+export const fetchFunds = async (type: FundType = FundType.ALL): Promise<{ data: Fund[], source: 'api' | 'cache' }> => {
+  console.log(`[TEFAS Service] Requesting data for: ${type}`);
   
   try {
     const today = new Date();
@@ -27,10 +31,33 @@ export const fetchFunds = async (type: FundType = FundType.ALL): Promise<Fund[]>
       kurucukod: ""
     };
 
-    const targetUrl = PROXY_URL + encodeURIComponent(TEFAS_API_URL);
-    console.log(`[TEFAS Service] Fetching from: ${targetUrl}`);
+    // --- STRATEGY 1: Try Vercel API Route (Best for Production) ---
+    try {
+      console.log("[TEFAS Service] Attempting Vercel API Route...");
+      const response = await fetch(API_ROUTE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(payload as any)
+      });
 
-    const response = await fetch(targetUrl, {
+      if (response.ok) {
+        const result = await response.json();
+        if (result && result.data) {
+          const parsed = parseTefasResponse(result.data);
+          saveToDatabase(parsed); // Save to LocalStorage
+          return { data: parsed, source: 'api' };
+        }
+      } else {
+        console.warn(`[TEFAS Service] API Route failed: ${response.status}`);
+      }
+    } catch (e) {
+      console.warn("[TEFAS Service] API Route unavailable (likely local dev). Switching to Proxy.");
+    }
+
+    // --- STRATEGY 2: Try CORS Proxy (Fallback) ---
+    console.log("[TEFAS Service] Attempting CORS Proxy...");
+    const targetUrl = PROXY_URL + encodeURIComponent(TEFAS_API_URL);
+    const proxyResponse = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -39,46 +66,62 @@ export const fetchFunds = async (type: FundType = FundType.ALL): Promise<Fund[]>
       body: new URLSearchParams(payload as any)
     });
 
-    console.log(`[TEFAS Service] Response status: ${response.status}`);
-
-    if (!response.ok) {
-      throw new Error(`Sunucu Hatası: ${response.status} ${response.statusText}`);
+    if (proxyResponse.ok) {
+        const text = await proxyResponse.text();
+        // Validate JSON to avoid HTML error pages
+        if (text.trim().startsWith('<')) throw new Error("Proxy blocked.");
+        
+        const result = JSON.parse(text);
+        if (result && result.data) {
+           const parsed = parseTefasResponse(result.data);
+           saveToDatabase(parsed);
+           return { data: parsed, source: 'api' };
+        }
     }
 
-    const text = await response.text();
-    console.log(`[TEFAS Service] Response length: ${text.length} chars`);
+    throw new Error("Tüm bağlantı yöntemleri başarısız oldu.");
 
-    // Check if response is HTML (Common proxy error page)
-    if (text.trim().startsWith('<')) {
-      console.error("[TEFAS Service] Received HTML instead of JSON. Proxy might be blocked or returning an error page.");
-      console.error("Preview:", text.substring(0, 200));
-      throw new Error("Proxy servisi HTML hata sayfası döndürdü. (Muhtemelen erişim engellendi)");
+  } catch (error) {
+    console.error("[TEFAS Service] Live fetch failed:", error);
+    
+    // --- STRATEGY 3: Load from "Database" (LocalStorage) ---
+    const cached = loadFromDatabase();
+    if (cached.length > 0) {
+      console.log("[TEFAS Service] Serving from Local Database cache.");
+      return { data: cached, source: 'cache' };
     }
 
-    let result;
-    try {
-      result = JSON.parse(text);
-    } catch (e) {
-      console.error("[TEFAS Service] JSON Parse Error:", e);
-      throw new Error("TEFAS'tan gelen veri JSON formatında değil.");
-    }
-
-    if (result && result.data && Array.isArray(result.data)) {
-       const parsed = parseTefasResponse(result.data);
-       console.log(`[TEFAS Service] Successfully parsed ${parsed.length} funds.`);
-       return parsed;
-    } else {
-       console.warn("[TEFAS Service] Unexpected JSON structure:", result);
-       // TEFAS sometimes returns empty data if no funds match, but structure should be there.
-       if (result.data === null) return []; 
-       throw new Error("TEFAS verisi beklendiği gibi değil (Veri yapısı bozuk).");
-    }
-
-  } catch (error: any) {
-    console.error("[TEFAS Service] General Error:", error);
-    throw new Error(error.message || "Bilinmeyen bir iletişim hatası oluştu.");
+    throw error;
   }
 };
+
+// --- DATABASE FUNCTIONS (LocalStorage) ---
+
+const saveToDatabase = (data: Fund[]) => {
+  try {
+    localStorage.setItem(DB_KEY, JSON.stringify(data));
+    localStorage.setItem(DB_TIMESTAMP_KEY, new Date().toISOString());
+  } catch (e) {
+    console.error("Database Save Failed (Quota exceeded?)", e);
+  }
+};
+
+const loadFromDatabase = (): Fund[] => {
+  try {
+    const data = localStorage.getItem(DB_KEY);
+    if (!data) return [];
+    return JSON.parse(data);
+  } catch (e) {
+    return [];
+  }
+};
+
+export const getLastDbUpdate = (): Date | null => {
+  const ts = localStorage.getItem(DB_TIMESTAMP_KEY);
+  return ts ? new Date(ts) : null;
+};
+
+// --- HELPERS ---
 
 const mapFundTypeToCode = (type: FundType): string => {
   switch (type) {
